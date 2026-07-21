@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 
+from ramify.core.command import Command
 from ramify.core.session import Session
 from ramify.drivers.docker import DockerDriver
 from ramify.drivers.git_worktree import GitWorktreeDriver
 from ramify.exceptions import BranchError, SessionClosedError
+from ramify.models.result import CommandResult
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,25 @@ class SessionBranch(Session):
         branch = cls(parent, name, worktree_path, git_branch, driver, docker_driver)
         logger.info("branched session %r -> %s", name, worktree_path)
         return branch
+
+    def run(
+        self,
+        command: str | Command,
+        *,
+        unsafe: bool = False,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        """Execute a command, preparing isolated Compose ports when needed."""
+        text = command.text if isinstance(command, Command) else command
+        if self._docker is not None and self._is_compose_command(text):
+            compose_file = self._docker.prepare_compose(self.cwd, self.env)
+            if compose_file is not None:
+                self.env["COMPOSE_FILE"] = compose_file
+        return super().run(text, unsafe=unsafe, timeout=timeout)
+
+    @staticmethod
+    def _is_compose_command(command: str) -> bool:
+        return "docker compose" in command or "docker-compose" in command
 
     # ---------------------------------------------------------------- merge
 
