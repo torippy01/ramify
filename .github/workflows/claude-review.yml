@@ -55,6 +55,7 @@ jobs:
       - name: Review pull request with Claude
         uses: anthropics/claude-code-action@b76a0776ae74036e77cd11018083743453d7ad35 # v1
         with:
+          github_token: ${{ github.token }}
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             Review pull request #${{ github.event.pull_request.number || inputs.pr_number }} in ${{ github.repository }}.
