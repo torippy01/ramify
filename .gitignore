@@ -6,6 +6,7 @@ __pycache__/
 .DS_Store
 *.pdf
 var/
+site/
 
 # Local Claude/Codex settings
 .claude/settings.local.json

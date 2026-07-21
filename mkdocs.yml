@@ -1,0 +1,40 @@
+site_name: Ramify
+site_description: Stateful terminal sessions and disposable Git worktree sandboxes for AI agents
+site_url: https://torippy01.github.io/ramify/
+repo_url: https://github.com/torippy01/ramify
+repo_name: torippy01/ramify
+
+theme:
+  name: material
+  language: ja
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            members_order: source
+            show_source: true
+            show_root_heading: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - tables
+
+nav:
+  - Home: index.md
+  - 利用ガイド:
+      - MCPサーバー: guide/mcp.md
+  - APIリファレンス:
+      - Core API: api/core.md
+      - MCP Tools: api/mcp.md
