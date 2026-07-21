@@ -13,6 +13,12 @@ dev = [
     "ruff>=0.4",
     "mypy>=1.10",
 ]
+mcp = [
+    "mcp>=1.23,<2",
+]
+
+[project.scripts]
+ramify-mcp = "ramify.mcp_server:main"
 
 [build-system]
 requires = ["hatchling"]
