@@ -19,18 +19,20 @@ class CommandResult:
     exit_code: int
     cwd: str
     env_changes: dict[str, str | None] = field(default_factory=dict)
-    modified_files: tuple[str, ...] = ()
     duration_ms: int = 0
+    modified_files: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
         return self.exit_code == 0
 
     def to_llm_json(self, max_output_chars: int = 2000) -> str:
-        """Serialize to compact JSON, dropping empty fields and truncating long output.
+        """Serialize to the compact, stable LLM-facing result schema.
 
-        Designed to minimize tokens: no whitespace, no empty values, ANSI
-        codes stripped, and long output truncated in the middle.
+        ``stdout``/``stderr`` are sanitized and reduced only for this JSON
+        representation; the raw values remain available on the result. Empty
+        optional fields are omitted, and failed commands expose an
+        ``error_tail`` for efficient diagnosis.
         """
         payload: dict[str, Any] = {
             "cmd": self.command,
