@@ -20,7 +20,7 @@ ANTHROPIC_API_KEY
 - PRへの新しいコミットのpush
 - DraftからReady for reviewへの変更
 
-forkからのPRでは、秘密情報を扱うジョブを起動しません。これは、`pull_request_target`がベースリポジトリのSecretsにアクセスできるためです。fork PRをレビューする場合は、内容を確認したうえで、Secretsを使わない別の環境で手動レビューしてください。
+forkからのPRでは、秘密情報を扱うジョブを起動しません。`pull_request`ではfork由来のSecretsが利用できないうえ、workflow内でもhead repositoryを検査して同一リポジトリ以外を除外します。fork PRをレビューする場合は、内容を確認したうえで、Secretsを使わない別の環境で手動レビューしてください。
 
 ## 手動レビュー
 
