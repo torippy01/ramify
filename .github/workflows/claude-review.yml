@@ -10,6 +10,10 @@ on:
         required: true
         type: number
 
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
 # This workflow never checks out the PR head. Claude reads the diff through the
 # GitHub API, and the checkout below explicitly uses the trusted base branch.
 permissions:
@@ -19,6 +23,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       allowed: ${{ steps.check.outputs.allowed }}
     steps:
@@ -40,6 +45,7 @@ jobs:
     needs: validate
     if: needs.validate.outputs.allowed == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: write
