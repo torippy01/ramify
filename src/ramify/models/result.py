@@ -19,6 +19,7 @@ class CommandResult:
     exit_code: int
     cwd: str
     env_changes: dict[str, str | None] = field(default_factory=dict)
+    modified_files: tuple[str, ...] = ()
     duration_ms: int = 0
 
     @property
@@ -44,4 +45,6 @@ class CommandResult:
             payload["stderr"] = stderr
         if self.env_changes:
             payload["env_changes"] = self.env_changes
+        if self.modified_files:
+            payload["modified_files"] = list(self.modified_files)
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))

@@ -14,6 +14,7 @@ from ramify.core.command import Command
 from ramify.exceptions import RamifyError, SessionClosedError
 from ramify.guards.safety import SafetyGuard
 from ramify.models.result import CommandResult
+from ramify.state.workspace import WorkspaceSnapshot
 
 if TYPE_CHECKING:
     from ramify.core.branch import SessionBranch
@@ -68,6 +69,7 @@ class Session:
         text = command.text if isinstance(command, Command) else command
         if not unsafe:
             self.guard.check(text)
+        workspace_before = WorkspaceSnapshot.capture(self.cwd)
 
         # Capture the environment in the same shell immediately before and
         # after the command.  Comparing the post-command environment with
@@ -104,6 +106,8 @@ class Session:
         env_changes = self._apply_env(before_env, new_env)
         if new_cwd and Path(new_cwd).is_dir():
             self.cwd = new_cwd
+        workspace_after = WorkspaceSnapshot.capture(self.cwd)
+        modified_files = workspace_before.changed_files_since(workspace_after)
 
         result = CommandResult(
             command=text,
@@ -112,6 +116,7 @@ class Session:
             exit_code=proc.returncode,
             cwd=self.cwd,
             env_changes=env_changes,
+            modified_files=modified_files,
             duration_ms=duration_ms,
         )
         self.history.append(result)
