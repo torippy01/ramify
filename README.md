@@ -1,60 +1,144 @@
 # Ramify
 
-AIエージェント向けのターミナル実行ライブラリ。**ステートフルなセッション**と**即時ブランチ（サンドボックス）**を提供します。
+**Give AI agents a safe space to experiment — and fail.**
 
-- `cd` や `export` を記憶する常駐型セッション
-- `git worktree` による高速なファイル隔離ブランチ（作成 → 実験 → merge / 破棄）
-- `COMPOSE_PROJECT_NAME` によるDocker隔離
-- `sudo` / `systemctl` / `apt` / `brew` などグローバル影響コマンドの実行前ブロック
-- LLM向けにトークン最適化されたJSON結果（`to_llm_json()`）
-  - ANSI・進捗ログのサニタイズ
-  - 変更ファイル一覧（Gitリポジトリ内の場合）
-- 失敗時の`error_tail`
+Ramify is a stateful terminal execution library with **instant, disposable branching** for AI agents. It lets an agent spin up an isolated copy of your workspace in a fraction of a second, try something risky, and then either merge the result back or throw the whole thing away — files, containers, and all.
 
-ドキュメント: [MCP利用手順・APIリファレンス](https://torippy01.github.io/ramify/)
+[日本語版 README](README.ja.md) | [Documentation](https://torippy01.github.io/ramify/)
 
-## 必要環境
+```python
+from ramify import Session
 
-- Python 3.10+
-- git（ブランチ機能に必須）
-- docker（Docker隔離を使う場合のみ）
+s = Session(cwd="/path/to/your/repo")
 
-## インストール
-
-### pip
-
-```bash
-# ローカルのソースからインストール
-pip install /path/to/ramify
-
-# 開発向け（editable: ソース編集が即反映される）
-pip install -e /path/to/ramify
+b = s.branch("risky-refactor")     # isolated git worktree, created in ~0.1s
+b.run("rm -rf tests/legacy && pytest -q")
+s.merge(b)                          # keep it — changes land in your tree, uncommitted
+b.close()                           # or drop it — worktree, files, containers: all gone
 ```
 
-### uv
+## Why Ramify
 
-```bash
-# 仮想環境にインストール
-uv pip install -e /path/to/ramify
+Agents that execute shell commands today face a bad trade-off:
 
-# インストールせずに都度実行
-uv run --no-project --with-editable /path/to/ramify python your_script.py
+- **Raw local shell** — fast, but one `rm -rf` in the wrong directory and the damage is permanent. Every command mutates shared state that nobody can roll back.
+- **Container-per-task sandboxes** — safe, but heavyweight. Seconds of startup per attempt, image maintenance, and a filesystem that doesn't look like the user's actual workspace.
+
+Ramify takes a third path: **borrow the isolation you already have**. Git gives you copy-on-write workspace clones (`git worktree`); Docker Compose gives you namespaced container stacks (`COMPOSE_PROJECT_NAME`). Ramify composes these into a session/branch model designed around four principles:
+
+1. **Branching should be as cheap as a thought.** An agent should never hesitate to try something because the sandbox is expensive. Worktree branches are near-instant and share object storage with the parent repo.
+2. **Cleanup must be deterministic.** `close()` doesn't "try" to clean up — it guarantees worktrees, temp dirs, and Compose stacks are destroyed. No leftover state, no snowballing side effects.
+3. **What can't be rolled back must be blocked.** File changes revert; `sudo`, `systemctl`, `apt`, and `brew` don't. Ramify intercepts host-mutating commands *before* they run and raises `GlobalStateError`.
+4. **Output is a token budget, not a log file.** Results are compacted for LLM consumption: ANSI noise and progress spinners stripped, long output trimmed head+tail, failures summarized in an `error_tail`. Raw stdout/stderr stay available in Python.
+
+## Features
+
+- **Stateful sessions** — `cd` and `export` persist across `run()` calls, like a real terminal. Agents don't need to re-derive context every command.
+- **Instant branches** — `session.branch(name)` creates an isolated git worktree; `merge()` applies the branch's diff back to the parent working tree (uncommitted, so a human still owns the commit); `close()` destroys everything.
+- **Docker isolation** — `branch(name, docker=True)` namespaces Compose projects per branch, so containers started in an experiment can't collide with — or outlive — the branch.
+- **Safety guard** — host-mutating commands (`sudo`, `systemctl`, `apt`, `apt-get`, `brew`, …) are blocked pre-execution with an explanation the agent can act on.
+- **Token-optimized results** — `CommandResult.to_llm_json()` emits compact JSON: always `cmd` / `exit` / `cwd`, plus `stdout`, `stderr`, `error_tail`, `env_changes`, and `modified_files` only when present.
+- **Optional command builder** — plain Bash strings are the primary interface, but a thin operator DSL is there when composing programmatically: `(s.cat("app.log") | s.grep("ERROR")).exec()`, `(s.echo("hi") > "out.txt").exec()`.
+- **MCP server** — expose sessions and branches to Claude Code, Claude Desktop, or any MCP client via four tools: `ramify_run`, `ramify_branch`, `ramify_merge`, `ramify_close`.
+
+## Use cases
+
+- **Coding agents that test before they touch.** Run the migration, the dependency bump, or the aggressive refactor in a branch. Merge only if the test suite passes; `close()` if it doesn't. The user's tree never sees a broken intermediate state.
+- **Parallel exploration.** Fan out N branches trying N approaches to the same problem, compare results, merge the winner. Worktrees are cheap enough to make this a default strategy rather than a luxury.
+- **Guardrails for autonomous loops.** Long-running agents accumulate state drift — half-applied edits, stray containers, mutated env. Sessions keep intended state (`cwd`, `env`) and branches quarantine everything else.
+- **MCP-native sandboxing.** Plug `ramify-mcp` into Claude Code and the agent gets branch/merge/rollback as first-class tools, with token-efficient output baked in.
+
+## How it works
+
+```mermaid
+flowchart LR
+    S["Session\n(your repo, stateful cwd/env)"]
+    B1["Branch: fix-attempt\ngit worktree + tmp dir"]
+    B2["Branch: risky-refactor\ngit worktree + Compose namespace"]
+    S -- "branch()" --> B1
+    S -- "branch(docker=True)" --> B2
+    B1 -- "merge() → diff applied, uncommitted" --> S
+    B2 -- "close() → worktree + containers destroyed" --> X["(nothing left)"]
 ```
 
-> エディタ（Pylance等）で `import ramify` が解決されない場合は、
-> エディタが参照している仮想環境に `pip install -e .` されているか確認してください。
+A branch is a real git worktree in a temp directory: same history, same tooling, isolated files. `merge()` computes the branch's diff and applies it to the parent working tree — changes arrive **uncommitted**, so nothing lands in history without human review. A failed merge (e.g., conflicting edits) is atomic: the parent tree is untouched and the branch stays alive for a retry.
 
-### MCP Server
+## Installation
 
-MCP連携を使う場合は、optional dependencyを追加します。
+Requires **Python 3.10+** and **git** (plus **docker** only for Docker isolation).
+
+```bash
+pip install git+https://github.com/torippy01/ramify.git
+
+# with MCP server support
+pip install "ramify[mcp] @ git+https://github.com/torippy01/ramify.git"
+
+# local development (editable)
+git clone https://github.com/torippy01/ramify.git && cd ramify
+uv sync   # or: pip install -e ".[dev,mcp]"
+```
+
+## Quick start
+
+```python
+from ramify import Session, GlobalStateError
+
+s = Session(cwd="/path/to/your/git/repo")
+
+# 1. Stateful: cd / export carry over to the next run()
+s.run("cd src")
+s.run("export API_KEY=xxx")
+
+# 2. Compact JSON for the LLM; raw output stays on the result object
+result = s.run("pytest -q")
+print(result.to_llm_json())  # {"cmd":"pytest -q","exit":0,"cwd":...,"stdout":...}
+print(result.stdout)         # full, unsanitized output
+
+# 3. Compose commands programmatically when it's cleaner than string building
+(s.cat("app.log") | s.grep("ERROR")).exec()
+(s.echo("hello") > "out.txt").exec()
+
+# 4. Un-rollbackable commands are blocked up front
+try:
+    s.run("sudo apt-get install nginx")
+except GlobalStateError as e:
+    print(e)  # "privilege escalation affects the whole host"
+
+# 5. Branch → experiment → merge or destroy
+b = s.branch("experiment")
+b.run("echo 'try something' > note.txt")   # parent tree unaffected
+s.merge(b)                                  # apply diff to parent (uncommitted)
+b.close()                                   # deterministic cleanup
+
+s.close()
+```
+
+Sessions are also context managers:
+
+```python
+with Session(cwd="/path/to/repo") as s:
+    print(s.run("pytest -q").to_llm_json())
+```
+
+### `CommandResult.to_llm_json()`
+
+Always present: `cmd`, `exit`, `cwd`. Present only when meaningful:
+
+| Key | Content |
+| --- | --- |
+| `stdout` | Sanitized stdout — ANSI/progress noise removed, long output trimmed to head + tail |
+| `stderr` | Sanitized, compacted stderr |
+| `error_tail` | On failure, the diagnostic tail (prefers stderr) |
+| `env_changes` | Environment variables that changed during the command |
+| `modified_files` | Files changed, relative to the git repo root |
+
+## MCP server
 
 ```bash
 pip install "ramify[mcp]"
-# または
-uv pip install "ramify[mcp]"
 ```
 
-`ramify-mcp`はstdio transportで起動します。Claude Desktopの設定例：
+Claude Code / Claude Desktop config:
 
 ```json
 {
@@ -66,86 +150,31 @@ uv pip install "ramify[mcp]"
 }
 ```
 
-提供されるツールは `ramify_run`、`ramify_branch`、`ramify_merge`、`ramify_close` です。
-`ramify_run`は`session_id`なしで呼び出すと新しいセッションを作成し、ブランチ実行時は`branch_id`を指定します。
+The server speaks stdio and exposes `ramify_run`, `ramify_branch`, `ramify_merge`, and `ramify_close`. Calling `ramify_run` without a `session_id` creates a session implicitly; pass a `branch_id` to run inside a branch. See the [MCP guide](https://torippy01.github.io/ramify/guide/mcp/) for details.
 
-## クイックスタート
-
-```python
-from ramify import Session, GlobalStateError
-
-s = Session(cwd="/path/to/your/git/repo")
-
-# 1. ステートフル: cd や export が次の run() にも引き継がれる
-s.run("cd src")
-s.run("export API_KEY=xxx")
-
-# 2. 結果はLLM向けのコンパクトなJSONに
-result = s.run("pytest -q")
-print(result.to_llm_json())   # {"cmd":"pytest -q","exit":0,"cwd":...,"stdout":...}
-
-# 生のstdout/stderrはresultに保持され、LLM向けJSONだけが圧縮される
-print(result.stdout)
-
-# 失敗時はerror_tail、Gitリポジトリ内の変更はmodified_filesに含まれる
-# {"cmd":"pytest -q","exit":1,"cwd":"...","error_tail":"...","modified_files":[...]}
-
-# 3. 演算子でコマンド構築
-(s.cat("app.log") | s.grep("ERROR")).exec()
-(s.echo("hello") > "out.txt").exec()
-
-# 4. グローバル影響コマンドはブロックされる
-try:
-    s.run("sudo apt-get install nginx")
-except GlobalStateError as e:
-    print(e)
-
-# 5. ブランチ: git worktreeで即座にサンドボックス複製
-b = s.branch("risky-experiment")          # docker=True でDocker隔離も
-b.run("rm -rf tests/ && echo experiment > note.txt")   # 本筋には影響なし
-s.merge(b)                                # 良ければ差分を本筋へ書き戻し
-b.close()                                 # worktree・コンテナを一括削除
-
-s.close()
-```
-
-### `CommandResult.to_llm_json()` の形式
-
-常に出力される項目は `cmd`、`exit`、`cwd` です。以下の項目は値が存在する場合だけ出力されます。
-
-| キー | 内容 |
-| --- | --- |
-| `stdout` | ANSI・進捗ノイズを除去し、長い場合は先頭と末尾を残した標準出力 |
-| `stderr` | サニタイズ・圧縮された標準エラー |
-| `error_tail` | 失敗時の診断用エラー末尾。stderrを優先 |
-| `env_changes` | コマンド前後で変化した環境変数 |
-| `modified_files` | Gitリポジトリ相対の変更ファイル一覧 |
-
-JSONは空白を含まないコンパクト形式です。生の出力が必要な場合は、`CommandResult.stdout`と`CommandResult.stderr`を直接参照してください。
-
-デモスクリプト: [`var/demo.py`](var/demo.py)
+## Development
 
 ```bash
-uv run --no-project --with-editable . python var/demo.py
+uv sync
+uv run pytest                                  # tests
+uv run ruff check src/ tests/ && uv run ruff format src/ tests/
+uv run mypy src/                               # strict type checking
 ```
-
-## 開発
-
-```bash
-uv pip install -e ".[dev]"
-
-pytest tests/          # テスト
-ruff check . && ruff format .   # lint / format
-mypy --strict src/     # 型チェック
-```
-
-## ディレクトリ構造
 
 ```
 src/ramify/
-├── core/       # Session, SessionBranch, Command（構築演算子）
-├── drivers/    # Git Worktree / Docker 隔離バックエンド
-├── guards/     # SafetyGuard（グローバル影響コマンド検査）
+├── core/       # Session, SessionBranch, Command
+├── drivers/    # git worktree / Docker isolation backends
+├── guards/     # SafetyGuard (host-mutating command interception)
 ├── models/     # CommandResult
-└── utils/      # 出力サニタイズ・トークン削減
+├── state/      # workspace state tracking
+└── utils/      # output sanitization & token reduction
 ```
+
+## Status & roadmap
+
+Ramify is young (v0.1.0) and moving fast. The vision: become the standard execution and state-management engine for AI agent frameworks — lightweight session branching and deterministic rollback instead of container-per-task overhead or unprotected local shells. See [ROADMAP.md](ROADMAP.md) for where it's headed; issues and feedback are very welcome.
+
+## License
+
+[MIT](pyproject.toml)

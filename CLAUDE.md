@@ -11,7 +11,7 @@ It provides a lightweight sandbox (via `git worktree` and `COMPOSE_PROJECT_NAME`
 - **Type check**: `uv run mypy src/`
 
 ## Core Architectural Rules
-1. **No Custom DSL**: Accept standard Bash string commands in `run()`. Do NOT implement complex operator overloading (`|`, `>`) or custom syntax.
+1. **Bash-First, Thin DSL**: Standard Bash strings in `run()` are the primary interface and must always work on their own. The operator-based `Command` builder (`|`, `>`, `>>` in `core/command.py`) is intentional, optional sugar — keep it thin, and do not grow it into a required or complex custom syntax.
 2. **Deterministic Cleanup**: Always ensure resources (Git worktrees, Docker containers via `docker-compose down`, temp dirs) are 100% destroyed on `branch.close()`.
 3. **Safety First**: Intercept un-rollbackable host OS commands (`sudo`, `systemctl`, `apt`, `brew`) and raise `GlobalStateError`.
 4. **Token Optimization**: Format output into concise JSON (`to_llm_json()`) that strips noise (e.g., long `pip install` logs) to minimize token consumption.
