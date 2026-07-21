@@ -70,6 +70,20 @@ class TestResult:
         assert "chars truncated" in payload["stdout"]
         assert len(payload["stdout"]) < 700
 
+    def test_to_llm_json_strips_ansi_and_reports_error_tail(self, session: Session) -> None:
+        result = session.run("printf '\\033[31mERROR: failed\\033[0m\\n' >&2; exit 2")
+        payload = json.loads(result.to_llm_json())
+        assert payload["stderr"] == "ERROR: failed"
+        assert payload["error_tail"] == "ERROR: failed"
+
+    def test_to_llm_json_collapses_install_progress(self, session: Session) -> None:
+        result = session.run(
+            "printf 'Downloading one\\nDownloading two\\nDownloading three\\nDone\\n'"
+        )
+        payload = json.loads(result.to_llm_json())
+        assert "progress lines omitted" in payload["stdout"]
+        assert "Done" in payload["stdout"]
+
     def test_reports_created_modified_and_deleted_files(
         self, session: Session, git_repo: Path
     ) -> None:

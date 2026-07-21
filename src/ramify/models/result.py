@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from ramify.utils.sanitize import strip_ansi, truncate_middle
+from ramify.utils.sanitize import error_tail, summarize_output
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,12 +37,17 @@ class CommandResult:
             "exit": self.exit_code,
             "cwd": self.cwd,
         }
-        stdout = truncate_middle(strip_ansi(self.stdout).rstrip(), max_output_chars)
-        stderr = truncate_middle(strip_ansi(self.stderr).rstrip(), max_output_chars)
+        stdout = summarize_output(self.stdout, max_output_chars)
+        stderr = summarize_output(self.stderr, max_output_chars)
         if stdout:
             payload["stdout"] = stdout
         if stderr:
             payload["stderr"] = stderr
+        if not self.ok:
+            failure_output = self.stderr or self.stdout
+            tail = error_tail(failure_output, max_output_chars)
+            if tail:
+                payload["error_tail"] = tail
         if self.env_changes:
             payload["env_changes"] = self.env_changes
         if self.modified_files:
