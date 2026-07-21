@@ -42,6 +42,31 @@ uv run --no-project --with-editable /path/to/ramify python your_script.py
 > エディタ（Pylance等）で `import ramify` が解決されない場合は、
 > エディタが参照している仮想環境に `pip install -e .` されているか確認してください。
 
+### MCP Server
+
+MCP連携を使う場合は、optional dependencyを追加します。
+
+```bash
+pip install "ramify[mcp]"
+# または
+uv pip install "ramify[mcp]"
+```
+
+`ramify-mcp`はstdio transportで起動します。Claude Desktopの設定例：
+
+```json
+{
+  "mcpServers": {
+    "ramify": {
+      "command": "ramify-mcp"
+    }
+  }
+}
+```
+
+提供されるツールは `ramify_run`、`ramify_branch`、`ramify_merge`、`ramify_close` です。
+`ramify_run`は`session_id`なしで呼び出すと新しいセッションを作成し、ブランチ実行時は`branch_id`を指定します。
+
 ## クイックスタート
 
 ```python
