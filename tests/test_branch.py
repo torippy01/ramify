@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
 from ramify import Session
 from ramify.core.branch import SessionBranch
+from ramify.drivers.docker import DockerDriver
 
 
 def _worktree_list(repo: Path) -> str:
@@ -48,6 +50,48 @@ class TestBranchIsolation:
             assert branch.env["RAMIFY_PORT_BASE"].isdigit()
         finally:
             branch.close()
+
+
+class TestDockerIsolation:
+    def test_compose_config_randomizes_published_ports(self, tmp_path: Path, monkeypatch) -> None:
+        (tmp_path / "compose.yml").write_text("services: {}\n")
+        config = {
+            "services": {
+                "web": {
+                    "ports": [
+                        {"target": 80, "published": 8080, "protocol": "tcp"},
+                        {"target": 443, "protocol": "tcp"},
+                    ]
+                }
+            }
+        }
+        calls: list[list[str]] = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(
+                args, 0, stdout=json.dumps(config), stderr=""
+            )
+
+        monkeypatch.setattr("ramify.drivers.docker.shutil.which", lambda _: "/usr/bin/docker")
+        monkeypatch.setattr("ramify.drivers.docker.subprocess.run", fake_run)
+
+        driver = DockerDriver("ports")
+        generated = driver.prepare_compose(str(tmp_path), driver.isolation_env())
+
+        assert generated is not None
+        resolved = json.loads(Path(generated).read_text())
+        assert resolved["services"]["web"]["ports"][0]["published"] == 0
+        assert "published" not in resolved["services"]["web"]["ports"][1]
+        assert calls[0][:4] == ["docker", "compose", "-p", driver.project_name]
+        driver.teardown(str(tmp_path))
+        assert "-f" in calls[1]
+        assert calls[1][-4:] == ["--volumes", "--remove-orphans", "--timeout", "10"]
+
+    def test_parallel_drivers_use_unique_compose_projects(self) -> None:
+        first = DockerDriver("same")
+        second = DockerDriver("same")
+        assert first.project_name != second.project_name
 
 
 class TestBranchCleanup:
