@@ -84,6 +84,38 @@ class TestResult:
         assert "progress lines omitted" in payload["stdout"]
         assert "Done" in payload["stdout"]
 
+    def test_command_result_positional_duration_is_backward_compatible(self) -> None:
+        from ramify.models.result import CommandResult
+
+        result = CommandResult("echo", "", "", 0, "/tmp", {}, 123)
+        assert result.duration_ms == 123
+        assert result.modified_files == ()
+
+    def test_llm_json_includes_all_nonempty_optional_fields(self) -> None:
+        from ramify.models.result import CommandResult
+
+        result = CommandResult(
+            command="make test",
+            stdout="output",
+            stderr="failure",
+            exit_code=1,
+            cwd="/repo",
+            env_changes={"MODE": "test"},
+            duration_ms=10,
+            modified_files=("src/app.py",),
+        )
+        payload = json.loads(result.to_llm_json())
+        assert payload == {
+            "cmd": "make test",
+            "exit": 1,
+            "cwd": "/repo",
+            "stdout": "output",
+            "stderr": "failure",
+            "error_tail": "failure",
+            "env_changes": {"MODE": "test"},
+            "modified_files": ["src/app.py"],
+        }
+
     def test_reports_created_modified_and_deleted_files(
         self, session: Session, git_repo: Path
     ) -> None:
