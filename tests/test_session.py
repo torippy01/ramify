@@ -31,6 +31,15 @@ class TestStatefulness:
         result2 = session.run("printf '%s' \"$RAMIFY_TEST_VAR\"")
         assert result2.stdout == "hello"
 
+    def test_noop_command_has_no_environment_noise(self, session: Session) -> None:
+        result = session.run("echo hello")
+        assert result.env_changes == {}
+
+    def test_tracks_environment_values_with_special_characters(self, session: Session) -> None:
+        result = session.run("export RAMIFY_SPECIAL=$'left=right\\nsecond-line'")
+        assert result.env_changes["RAMIFY_SPECIAL"] == "left=right\nsecond-line"
+        assert session.env["RAMIFY_SPECIAL"] == "left=right\nsecond-line"
+
     def test_unset_env_is_tracked(self, session: Session) -> None:
         session.run("export RAMIFY_GONE=1")
         result = session.run("unset RAMIFY_GONE")
