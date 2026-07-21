@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "ramify": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--extra", "mcp", "ramify-mcp"]
+    }
+  }
+}
