@@ -69,8 +69,24 @@ class Session:
         if not unsafe:
             self.guard.check(text)
 
-        delim = f"__RAMIFY_STATE_{uuid.uuid4().hex}__"
-        script = f"{text}\n__ramify_rc=$?\nprintf '\\n%s\\n' {delim}\npwd\nenv\nexit $__ramify_rc\n"
+        # Capture the environment in the same shell immediately before and
+        # after the command.  Comparing the post-command environment with
+        # ``self.env`` is noisy because shell startup (and test runners) may
+        # add variables between Session construction and execution.
+        before_delim = f"__RAMIFY_BEFORE_{uuid.uuid4().hex}__"
+        command_delim = f"__RAMIFY_COMMAND_{uuid.uuid4().hex}__"
+        after_delim = f"__RAMIFY_AFTER_{uuid.uuid4().hex}__"
+        script = (
+            f"printf '\\n%s\\n' {before_delim}\n"
+            f"env -0\n"
+            f"printf '\\n%s\\n' {command_delim}\n"
+            f"{text}\n"
+            f"__ramify_rc=$?\n"
+            f"printf '\\n%s\\n' {after_delim}\n"
+            f"pwd\n"
+            f"env -0\n"
+            f"exit $__ramify_rc\n"
+        )
         started = time.monotonic()
         proc = subprocess.run(  # noqa: S603
             [self.shell, "-c", script],
@@ -82,8 +98,10 @@ class Session:
         )
         duration_ms = int((time.monotonic() - started) * 1000)
 
-        stdout, new_cwd, new_env = self._parse_state(proc.stdout, delim)
-        env_changes = self._apply_env(new_env)
+        stdout, before_env, new_cwd, new_env = self._parse_state(
+            proc.stdout, before_delim, command_delim, after_delim
+        )
+        env_changes = self._apply_env(before_env, new_env)
         if new_cwd and Path(new_cwd).is_dir():
             self.cwd = new_cwd
 
@@ -101,38 +119,65 @@ class Session:
         return result
 
     @staticmethod
-    def _parse_state(raw_stdout: str, delim: str) -> tuple[str, str | None, dict[str, str]]:
-        marker = f"\n{delim}\n"
-        if marker not in raw_stdout:
-            # Command exited the shell early (e.g. `exec`, `exit`): no state block.
-            return raw_stdout, None, {}
-        stdout, _, state = raw_stdout.rpartition(marker)
-        lines = state.splitlines()
-        new_cwd = lines[0] if lines else None
-        new_env: dict[str, str] = {}
-        for line in lines[1:]:
-            key, sep, value = line.partition("=")
-            if sep:
-                new_env[key] = value
-        return stdout, new_cwd, new_env
+    def _parse_state(
+        raw_stdout: str,
+        before_delim: str,
+        command_delim: str,
+        after_delim: str,
+    ) -> tuple[str, dict[str, str], str | None, dict[str, str]]:
+        before_marker = f"\n{before_delim}\n"
+        command_marker = f"\n{command_delim}\n"
+        after_marker = f"\n{after_delim}\n"
 
-    def _apply_env(self, new_env: dict[str, str]) -> dict[str, str | None]:
-        if not new_env:
+        before_stdout, before_sep, before_state = raw_stdout.partition(before_marker)
+        if not before_sep:
+            # Command exited the shell before the state block (e.g. `exec`).
+            return raw_stdout, {}, None, {}
+
+        before_raw, command_sep, command_stdout = before_state.partition(command_marker)
+        if not command_sep:
+            return before_stdout, {}, None, {}
+
+        stdout, after_sep, after_state = command_stdout.partition(after_marker)
+        if not after_sep:
+            return before_stdout + stdout, {}, None, {}
+
+        new_cwd, _, after_env_raw = after_state.partition("\n")
+        return (
+            stdout,
+            Session._parse_env0(before_raw),
+            new_cwd or None,
+            Session._parse_env0(after_env_raw),
+        )
+
+    @staticmethod
+    def _parse_env0(raw: str) -> dict[str, str]:
+        values: dict[str, str] = {}
+        for entry in raw.split("\0"):
+            key, sep, value = entry.partition("=")
+            if sep:
+                values[key] = value
+        return values
+
+    def _apply_env(
+        self, before_env: dict[str, str], after_env: dict[str, str]
+    ) -> dict[str, str | None]:
+        if not before_env and not after_env:
             return {}
         changes: dict[str, str | None] = {}
-        for key, value in new_env.items():
+        for key, value in after_env.items():
             if key in _IGNORED_ENV_KEYS:
                 continue
-            if self.env.get(key) != value:
+            if before_env.get(key) != value:
                 changes[key] = value
-        for key in self.env:
-            if key not in new_env and key not in _IGNORED_ENV_KEYS:
+        for key in before_env:
+            if key not in after_env and key not in _IGNORED_ENV_KEYS:
                 changes[key] = None
-        for key, value in changes.items():
-            if value is None:
+        for key, new_value in changes.items():
+            if new_value is None:
                 self.env.pop(key, None)
             else:
-                self.env[key] = value
+                self.env[key] = new_value
         return changes
 
     # ------------------------------------------------- dynamic command builder
