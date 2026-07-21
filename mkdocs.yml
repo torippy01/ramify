@@ -35,6 +35,7 @@ nav:
   - Home: index.md
   - 利用ガイド:
       - MCPサーバー: guide/mcp.md
+      - Claude PRレビュー: guide/claude-review.md
   - APIリファレンス:
       - Core API: api/core.md
       - MCP Tools: api/mcp.md
