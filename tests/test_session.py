@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -68,6 +69,33 @@ class TestResult:
         payload = json.loads(result.to_llm_json(max_output_chars=500))
         assert "chars truncated" in payload["stdout"]
         assert len(payload["stdout"]) < 700
+
+    def test_reports_created_modified_and_deleted_files(
+        self, session: Session, git_repo: Path
+    ) -> None:
+        (git_repo / "tracked.txt").write_text("before\n")
+        subprocess.run(["git", "-C", str(git_repo), "add", "tracked.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(git_repo), "commit", "-m", "add tracked file"], check=True
+        )
+
+        result = session.run(
+            "printf 'after\\n' > tracked.txt; printf 'new\\n' > created.txt; rm README.md"
+        )
+
+        assert result.modified_files == ("README.md", "created.txt", "tracked.txt")
+
+    def test_reports_both_paths_for_rename(self, session: Session, git_repo: Path) -> None:
+        result = session.run("mv README.md renamed.md")
+        assert result.modified_files == ("README.md", "renamed.md")
+
+    def test_modified_files_are_optional_outside_git(self, tmp_path: Path) -> None:
+        session = Session(cwd=tmp_path)
+        try:
+            result = session.run("touch created.txt")
+            assert result.modified_files == ()
+        finally:
+            session.close()
 
 
 class TestCommandBuilder:
